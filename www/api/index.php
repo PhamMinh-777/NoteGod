@@ -8,6 +8,7 @@ require_once __DIR__ . '/helpers/Response.php';
 require_once __DIR__ . '/helpers/Auth.php';
 require_once __DIR__ . '/controllers/AuthController.php';
 require_once __DIR__ . '/controllers/UserController.php';
+require_once __DIR__ . '/controllers/NoteController.php';
 
 // Enable CORS if requested
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
@@ -87,6 +88,9 @@ if ($uri === '/api/user/change-password' && $method === 'POST') {
 }
 if ($uri === '/api/user/preferences' && ($method === 'PUT' || $method === 'POST')) {
     UserController::updatePreferences();
+}
+if ($uri === '/api/notes' && $method === 'GET') {
+    NoteController::getAll();
 }
 
 // ---------------------------------------------------------------------
