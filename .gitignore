@@ -1,0 +1,28 @@
+# System junk
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Environment variables
+.env
+.env.local
+
+# IDE / Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# MySQL data files (ephemeral docker volumes)
+mysql/data/*
+!mysql/data/.gitkeep
+
+# Archive and temp files
+*.zip
+*.tar.gz
+*.log
