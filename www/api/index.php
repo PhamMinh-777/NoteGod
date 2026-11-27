@@ -89,8 +89,19 @@ if ($uri === '/api/user/change-password' && $method === 'POST') {
 if ($uri === '/api/user/preferences' && ($method === 'PUT' || $method === 'POST')) {
     UserController::updatePreferences();
 }
+// ---------------------------------------------------------------------
+// Note Routes
+// ---------------------------------------------------------------------
 if ($uri === '/api/notes' && $method === 'GET') {
     NoteController::getAll();
+}
+if ($uri === '/api/notes' && $method === 'POST') {
+    NoteController::create();
+}
+if (preg_match('#^/api/notes/(\d+)$#', $uri, $m)) {
+    if ($method === 'GET')                         NoteController::getOne((int)$m[1]);
+    if ($method === 'PUT' || $method === 'PATCH')  NoteController::update((int)$m[1]);
+    if ($method === 'DELETE')                      NoteController::delete((int)$m[1]);
 }
 
 // ---------------------------------------------------------------------

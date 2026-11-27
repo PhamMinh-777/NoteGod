@@ -58,12 +58,9 @@ async function api(endpoint, options = {}) {
   return data;
 }
 
-function loadNotes() {
-  try { const s = JSON.parse(localStorage.getItem('fn_notes')); if (s) return s; } catch (e) {}
-  return JSON.parse(JSON.stringify(MOCK_NOTES));
-}
-function saveNotes(list) { localStorage.setItem('fn_notes', JSON.stringify(list)); }
-
+let NOTES_CACHE = []; // notes from the API; the rest of the code keeps calling loadNotes()
+function loadNotes() { return NOTES_CACHE; }
+function saveNotes(list) { NOTES_CACHE = list; }
 
 
 /* ===== 3b. Note password + sharing helpers (mock; real hashing/cooldown belong on the server) ===== */
@@ -188,7 +185,7 @@ function renderFeed() {
     (state.filter !== 'shared' || n.shared) &&
     (!state.labels.length || n.labels.some(l => state.labels.includes(l))) &&
     (!q || (n.title + ' ' + (n.locked ? '' : n.body)).toLowerCase().includes(q)));
-  const pinned = list.filter(n => n.pinned).sort((a, b) => (b.pinnedAt || 0) - (a.pinnedAt || 0)),
+  const pinned = list.filter(n => n.pinned).sort((a, b) => new Date(b.pinned_at || 0) - new Date(a.pinned_at || 0)),
         others = list.filter(n => !n.pinned);
   $('#pinned-title').html(`${icon('pin', 'Pinned')} Pinned notes (${pinned.length}) <span class="cap">Ordered by pinned timestamp</span>`);
   $('#feed-h1').text(state.filter === 'shared' ? 'Shared With Me' : 'All Notes');
@@ -918,24 +915,31 @@ const NoteCache = (() => {
   };
 })();
 
-function loadFeed() {
+async function loadFeed() {
   $('.feed').removeClass('is-error').addClass('is-loading');
   $('#feed-error').addClass('d-none');
   $('#feed-skeleton').html('<div class="skel"></div>'.repeat(6)).removeClass('d-none');
   const finish = () => { $('.feed').removeClass('is-loading'); $('#feed-skeleton').addClass('d-none'); };
 
-  new Promise((resolve, reject) => setTimeout(() => { // TODO: replace with fetch(API_BASE + '/notes')
-    if (localStorage.getItem('fn_feed_fail') === '1') reject(new Error('feed failed')); // test switch
-    else resolve(loadNotes());
-  }, 500))
-    .then(list => { NoteCache.save(list); finish(); renderSidebarLabels(); renderFeed(); })
-    .catch(() => NoteCache.all().then(cached => {
-      finish();
-      if (cached.length) { // server unreachable: show what we cached last time
-        $('#offline-banner').removeClass('d-none').text("Couldn't refresh. Showing cached notes.");
-        renderFeed();
-      } else { $('.feed').addClass('is-error'); $('#feed-error').removeClass('d-none'); }
-    }));
+  try {
+    const res = await api('/notes');
+    NOTES_CACHE = res.data.notes;
+    NoteCache.save(NOTES_CACHE);
+  } catch (err) {
+    if (err.status === 401) { // session expired
+      localStorage.removeItem('fn_user'); sessionStorage.removeItem('fn_user');
+      location.href = '/auth/login.php'; return;
+    }
+    const cached = await NoteCache.all();
+    finish();
+    if (cached.length) { // server unreachable: show what we cached last time
+      NOTES_CACHE = cached;
+      $('#offline-banner').removeClass('d-none').text("Couldn't refresh. Showing cached notes.");
+      renderFeed();
+    } else { $('.feed').addClass('is-error'); $('#feed-error').removeClass('d-none'); }
+    return;
+  }
+  finish(); renderSidebarLabels(); renderFeed();
 }
 
 /* ===== 6g. Icons (SVG, colored by CSS) ===== */
