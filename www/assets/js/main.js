@@ -489,37 +489,56 @@ function initVerify() {
 /* ===== 6c. Note editor ===== */
 const NOTE_COLORS = ['default', 'lavender', 'butter', 'mint', 'rose', 'sky'];
 
-function initEditor() {
+async function initEditor() {
   if (!getUser()) { location.href = '/auth/login.php'; return; }
   const id = +new URLSearchParams(location.search).get('id') || 0;
-  let note = loadNotes().find(n => n.id === id);
-  const isNew = !note;
-  if (isNew) note = { id: Date.now(), title: '', body: '', html: '', pinned: false, locked: false,
-    shared: null, color: localStorage.getItem('fn_note_color') || 'default', attachments: 0,
-    files: [], labels: [], updated: new Date().toISOString().slice(0, 10) };
+  let note;
+  if (id) {
+    try { note = (await api('/notes/' + id)).data.note; }
+    catch (err) { location.href = '/'; return; } // not found, not yours, or logged out
+  } else {
+    note = { id: 0, title: '', body: '', html: '', pinned: false, locked: false, shared: null,
+      color: localStorage.getItem('fn_note_color') || 'default', attachments: 0,
+      files: [], labels: [], updated: new Date().toISOString() };
+  }
   note.files = note.files || [];
   note.recipients = note.recipients || [];
-  if (note.locked && !isUnlocked(note.id)) { location.href = '/'; return; } // must unlock first
+  if (note.locked) { location.href = '/'; return; } // locked notes come in Phase 4
   const readOnly = note.shared === 'read';
-  let timer, created = !isNew;
+  let timer, pending = false, inFlight = false, dirty = false, deleted = false;
 
   // --- status + autosave (no Save button) ---
-  const setStatus = s => $('#save-status').text(s === 'saving' ? 'Saving...' : 'All changes saved');
-  function persist() {
+  const setStatus = s => $('#save-status').text(
+    s === 'saving' ? 'Saving...' : s === 'error' ? 'Could not save. Check your connection.' : 'All changes saved');
+
+  async function persist() {
+    if (inFlight) { dirty = true; return; } // a save is running: save again when it finishes
+    pending = false;
     note.title = $('#note-title').val().trim();
     note.html = $('#content').html();
     note.body = $('#content').text().trim();
-    note.attachments = note.files.length;
-    if (!created && !note.title && !note.body) return setStatus('saved'); // don't save empty new notes
-    const list = loadNotes(), i = list.findIndex(n => n.id === note.id);
-    if (i < 0) list.unshift(note); else list[i] = note;
-    saveNotes(list);
-    if (!created) { created = true; history.replaceState(null, '', '/editor.php?id=' + note.id); }
-    setStatus('saved');
+    if (!note.id && !note.title && !note.body) return setStatus('saved'); // never create empty notes
+    inFlight = true;
+    try {
+      const payload = JSON.stringify({ title: note.title, content_rich: note.html });
+      if (!note.id) { // first save creates the note
+        const res = await api('/notes', { method: 'POST', body: payload, keepalive: true });
+        note.id = res.data.id;
+        history.replaceState(null, '', '/editor.php?id=' + note.id);
+      } else {
+        await api('/notes/' + note.id, { method: 'PUT', body: payload, keepalive: true });
+      }
+      setStatus(dirty ? 'saving' : 'saved');
+    } catch (err) {
+      setStatus('error');
+    } finally {
+      inFlight = false;
+      if (dirty) { dirty = false; persist(); }
+    }
   }
   function touch() {
     if (readOnly) return;
-    setStatus('saving'); clearTimeout(timer); timer = setTimeout(persist, 800);
+    pending = true; setStatus('saving'); clearTimeout(timer); timer = setTimeout(persist, 800);
   }
 
   // --- fill the form ---
@@ -644,14 +663,26 @@ function initEditor() {
     note.recipients.splice($(this).data('i'), 1); renderShare(); touch();
   });
   if (note.shared) $('#opt-lock, #opt-share').hide(); // only the owner can lock or share
+
+  // --- delete (confirmation dialog, then DELETE /api/notes/{id}) ---
   $('#opt-delete').on('click', () => $('#delete-modal').modal('show'));
-  $('#confirm-delete').on('click', () => {
-    saveNotes(loadNotes().filter(n => n.id !== note.id)); location.href = '/';
+  $('#confirm-delete').on('click', async function () {
+    const $b = $(this).prop('disabled', true);
+    clearTimeout(timer); deleted = true;
+    try {
+      if (note.id) await api('/notes/' + note.id, { method: 'DELETE' });
+      location.href = '/';
+    } catch (err) {
+      deleted = false; $b.prop('disabled', false);
+      alert(err.message || 'Could not delete the note.');
+    }
   });
 
   const syncOnline = () => $('#offline-banner').toggleClass('d-none', navigator.onLine);
   window.addEventListener('online', syncOnline); window.addEventListener('offline', syncOnline); syncOnline();
-  window.addEventListener('beforeunload', () => { clearTimeout(timer); if (!readOnly) persist(); });
+  window.addEventListener('beforeunload', () => {
+    if (pending && !readOnly && !deleted) { clearTimeout(timer); persist(); }
+  });
   initSummary(() => $('#content').text().trim());
   renderLabels(); renderFiles(); applyColor(); syncPin(); syncLock(); setStatus('saved');
 }
