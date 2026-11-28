@@ -601,7 +601,7 @@ async function initEditor() {
   const syncPin = () => $('#opt-pin').text(note.pinned ? 'Unpin' : 'Pin');
 
     // --- password lock: enable / change / disable ---
-  let lockMode = 'enable';git add .
+  let lockMode = 'enable';
   const syncLock = () => $('#opt-lock').text(note.locked ? 'Change / disable password' : 'Lock with password');
   function setLockMode(m) {
     lockMode = m;
