@@ -20,6 +20,25 @@ class NoteController {
         return json_decode(file_get_contents('php://input'), true) ?? [];
     }
 
+        /** note id => number of files, for this user's notes */
+    private static function fileCounts(PDO $db, int $uid): array {
+        $s = $db->prepare("SELECT a.note_id, COUNT(*) AS c FROM attachments a
+                           JOIN notes n ON n.id = a.note_id WHERE n.owner_id = :u GROUP BY a.note_id");
+        $s->execute([':u' => $uid]);
+        $map = [];
+        foreach ($s->fetchAll() as $r) { $map[(int)$r['note_id']] = (int)$r['c']; }
+        return $map;
+    }
+
+    private static function filesFor(PDO $db, int $noteId): array {
+        $s = $db->prepare("SELECT id, file_name, file_path, file_size, mime_type FROM attachments WHERE note_id = :n ORDER BY id");
+        $s->execute([':n' => $noteId]);
+        return array_map(fn($r) => [
+            'id' => (int)$r['id'], 'name' => $r['file_name'], 'size' => (int)$r['file_size'],
+            'url' => $r['file_path'], 'type' => $r['mime_type'],
+        ], $s->fetchAll());
+    }
+
     /** note id => [label names] for this user */
     private static function labelMap(PDO $db, int $uid): array {
         $s = $db->prepare("SELECT nl.note_id, l.name FROM note_labels nl
@@ -78,6 +97,7 @@ class NoteController {
         $stmt->execute($params);
         $rows = $stmt->fetchAll();
         $labelMap = self::labelMap($db, $user['id']);
+        $fileCounts = self::fileCounts($db, (int)$user['id']);
 
         $notes = [];
         foreach ($rows as $r) {
@@ -91,7 +111,7 @@ class NoteController {
                 'locked'      => $locked,
                 'shared'      => null,   // Phase 4
                 'color'       => $r['color'] ?: 'default',
-                'attachments' => 0,      // step 3.2
+                'attachments' => $fileCounts[(int)$r['id']] ?? 0,
                 'labels'      => $labelMap[(int)$r['id']] ?? [],
                 'updated'     => date('c', strtotime($r['updated_at'])),
             ];
@@ -117,6 +137,7 @@ class NoteController {
         }
 
         $locked = (bool)$r['is_locked'];
+        $files = self::filesFor($db, $id);
         Response::json(['note' => [
             'id'          => (int)$r['id'],
             'title'       => $r['title'],

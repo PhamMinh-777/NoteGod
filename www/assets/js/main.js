@@ -585,14 +585,39 @@ async function initEditor() {
   $('#colors').on('click', '.swatch', function () { note.color = $(this).data('c'); applyColor(); touch(); });
 
   // --- attachments (mock: stores file name and size only) ---
+  const fmtSize = b => b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
   function renderFiles() {
-    $('#files').html(note.files.map((f, i) =>
-      `<li>📎 ${esc(f.name)} <button class="btn btn-link btn-sm p-0 file-x" data-i="${i}">remove</button></li>`).join('')
-      || '<li class="text-muted">No attachments</li>');
+    $('#files').html(note.files.map(f => {
+      const t = f.type || '', st = 'max-width:100%;max-height:160px;border-radius:8px;display:block;margin:4px 0';
+      const view = t.startsWith('image/') ? `<img src="${escAttr(f.url)}" alt="${escAttr(f.name)}" style="${st}">`
+        : t.startsWith('video/') ? `<video src="${escAttr(f.url)}" controls style="${st}"></video>` : '';
+      return `<li>${view}📎 <a href="${escAttr(f.url)}" target="_blank" rel="noopener" download="${escAttr(f.name)}">${esc(f.name)}</a>
+        <span class="text-muted small">(${fmtSize(f.size)})</span>
+        <button class="btn btn-link btn-sm p-0 file-x" data-id="${+f.id}">remove</button></li>`;
+    }).join('') || '<li class="text-muted">No attachments</li>');
   }
-  $('#file-input').on('change', function () {
-    const f = this.files[0]; if (!f) return;
-    note.files.push({ name: f.name, size: f.size }); this.value = ''; renderFiles(); touch();
+  $('#file-input').on('change', async function () {
+    const picked = [...this.files]; this.value = '';
+    if (!picked.length) return;
+    if (!note.id) await persist(); // a brand-new note must exist before files can be attached
+    if (!note.id) { alert('Type a title or some text first, then attach files.'); return; }
+    for (const f of picked) {
+      if (f.size > 20 * 1024 * 1024) { alert(f.name + ' is larger than 20 MB.'); continue; }
+      const fd = new FormData(); fd.append('file', f);
+      setStatus('saving');
+      try {
+        const res = await api('/notes/' + note.id + '/attachments', { method: 'POST', body: fd });
+        note.files.push(res.data.file); renderFiles();
+      } catch (err) { alert(err.message || 'Upload failed.'); }
+    }
+    setStatus('saved');
+  });
+  $('#files').on('click', '.file-x', async function () {
+    const fid = +$(this).data('id');
+    try {
+      await api('/attachments/' + fid, { method: 'DELETE' });
+      note.files = note.files.filter(x => +x.id !== fid); renderFiles();
+    } catch (err) { alert(err.message || 'Could not remove the file.'); }
   });
   $('#files').on('click', '.file-x', function () { note.files.splice($(this).data('i'), 1); renderFiles(); touch(); });
 

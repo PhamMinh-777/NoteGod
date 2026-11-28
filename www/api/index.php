@@ -10,6 +10,7 @@ require_once __DIR__ . '/controllers/AuthController.php';
 require_once __DIR__ . '/controllers/UserController.php';
 require_once __DIR__ . '/controllers/NoteController.php';
 require_once __DIR__ . '/controllers/LabelController.php';
+require_once __DIR__ . '/controllers/AttachmentController.php';
 
 // Enable CORS if requested
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
@@ -111,6 +112,12 @@ if ($uri === '/api/labels' && $method === 'GET')    LabelController::getAll();
 if ($uri === '/api/labels' && $method === 'POST')   LabelController::create();
 if ($uri === '/api/labels' && $method === 'PUT')    LabelController::rename();
 if ($uri === '/api/labels' && $method === 'DELETE') LabelController::delete();
+if (preg_match('#^/api/notes/(\d+)/attachments$#', $uri, $m) && $method === 'POST') {
+    AttachmentController::upload((int)$m[1]);
+}
+if (preg_match('#^/api/attachments/(\d+)$#', $uri, $m) && $method === 'DELETE') {
+    AttachmentController::delete((int)$m[1]);
+}
 
 // ---------------------------------------------------------------------
 // Fallback for unhandled endpoints
