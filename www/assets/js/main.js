@@ -77,25 +77,27 @@ const fmtDate = d => new Date(d).toLocaleString('en-GB',
   { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 /* ===== 3c. Labels (a label can exist with no notes, so they are stored separately too) ===== */
-const getLabelStore = () => { try { return JSON.parse(localStorage.getItem('fn_labels')) || []; } catch (e) { return []; } };
-const saveLabelStore = l => localStorage.setItem('fn_labels', JSON.stringify(l));
-const allLabels = () => [...new Set([...getLabelStore(), ...loadNotes().flatMap(n => n.labels)])]
-  .sort((a, b) => a.localeCompare(b));
+let LABELS_CACHE = [];
+const allLabels = () => [...LABELS_CACHE].sort((a, b) => a.localeCompare(b));
+const labelApi = (method, body, query = '') =>
+  api('/labels' + query, { method, body: body ? JSON.stringify(body) : undefined })
+    .catch(err => alert(err.message || 'Label change failed.'));
 function validateLabel(v, ignore) {
   if (!v) return 'Label name is required.';
   if (v.length > 30) return 'Label must be 30 characters or less.';
   if (allLabels().some(l => l !== ignore && l.toLowerCase() === v.toLowerCase())) return 'That label already exists.';
   return '';
 }
+function addLabel(name) { LABELS_CACHE = [...LABELS_CACHE, name]; labelApi('POST', { name }); }
 function renameLabel(oldN, newN) {
-  const store = [...new Set(allLabels().map(l => l === oldN ? newN : l))];
-  saveNotes(loadNotes().map(n => ({ ...n, labels: [...new Set(n.labels.map(l => l === oldN ? newN : l))] })));
-  saveLabelStore(store);
+  LABELS_CACHE = LABELS_CACHE.map(l => l === oldN ? newN : l);
+  NOTES_CACHE = NOTES_CACHE.map(n => ({ ...n, labels: [...new Set(n.labels.map(l => l === oldN ? newN : l))] }));
+  labelApi('PUT', { old_name: oldN, name: newN });
 }
 function deleteLabel(name) { // notes are kept, only the label is removed from them
-  const store = allLabels().filter(l => l !== name);
-  saveNotes(loadNotes().map(n => ({ ...n, labels: n.labels.filter(l => l !== name) })));
-  saveLabelStore(store);
+  LABELS_CACHE = LABELS_CACHE.filter(l => l !== name);
+  NOTES_CACHE = NOTES_CACHE.map(n => ({ ...n, labels: n.labels.filter(l => l !== name) }));
+  labelApi('DELETE', null, '?name=' + encodeURIComponent(name));
 }
 const mgr = { editing: null, deleting: null };
 
@@ -335,7 +337,7 @@ function initNotes() {
     e.preventDefault();
     const v = $('#label-new').val().trim(), err = validateLabel(v);
     if (err) return labelErr(err);
-    saveLabelStore([...allLabels(), v]); $('#label-new').val(''); $('#label-error').addClass('d-none'); refreshLabels();
+    addLabel(v); $('#label-new').val(''); $('#label-error').addClass('d-none'); refreshLabels();
   });
   $('#label-manage-list')
     .on('click', '.label-edit-btn', function () {
@@ -520,7 +522,7 @@ async function initEditor() {
     if (!note.id && !note.title && !note.body) return setStatus('saved'); // never create empty notes
     inFlight = true;
     try {
-      const payload = JSON.stringify({ title: note.title, content_rich: note.html });
+      const payload = JSON.stringify({ title: note.title, content_rich: note.html, labels: note.labels });
       if (!note.id) { // first save creates the note
         const res = await api('/notes', { method: 'POST', body: payload, keepalive: true });
         note.id = res.data.id;
@@ -963,6 +965,7 @@ async function loadFeed() {
 
   try {
     const res = await api('/notes');
+    LABELS_CACHE = (await api('/labels')).data.labels.map(l => l.name);
     NOTES_CACHE = res.data.notes;
     NoteCache.save(NOTES_CACHE);
   } catch (err) {

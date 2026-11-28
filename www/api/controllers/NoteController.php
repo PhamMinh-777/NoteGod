@@ -20,22 +20,64 @@ class NoteController {
         return json_decode(file_get_contents('php://input'), true) ?? [];
     }
 
-    /**
-     * GET /api/notes
-     * Pinned notes first (most recently pinned on top), then newest updated.
-     */
+    /** note id => [label names] for this user */
+    private static function labelMap(PDO $db, int $uid): array {
+        $s = $db->prepare("SELECT nl.note_id, l.name FROM note_labels nl
+                           JOIN labels l ON l.id = nl.label_id
+                           WHERE l.user_id = :u ORDER BY l.name");
+        $s->execute([':u' => $uid]);
+        $map = [];
+        foreach ($s->fetchAll() as $r) {
+            $map[(int)$r['note_id']][] = $r['name'];
+        }
+        return $map;
+    }
+
+    /** Replace a note's labels with the given names (creates missing labels). */
+    private static function syncLabels(PDO $db, int $noteId, int $uid, array $names): void {
+        $clean = [];
+        foreach ($names as $n) {
+            $n = mb_substr(trim((string)$n), 0, 30);
+            if ($n !== '' && !in_array(mb_strtolower($n), array_map('mb_strtolower', $clean), true)) {
+                $clean[] = $n;
+            }
+        }
+        $db->prepare("DELETE FROM note_labels WHERE note_id = :n")->execute([':n' => $noteId]);
+        foreach ($clean as $name) {
+            $s = $db->prepare("SELECT id FROM labels WHERE user_id = :u AND name = :n");
+            $s->execute([':u' => $uid, ':n' => $name]);
+            $lid = $s->fetchColumn();
+            if (!$lid) {
+                $db->prepare("INSERT INTO labels (user_id, name) VALUES (:u, :n)")->execute([':u' => $uid, ':n' => $name]);
+                $lid = $db->lastInsertId();
+            }
+            $db->prepare("INSERT IGNORE INTO note_labels (note_id, label_id) VALUES (:n, :l)")
+               ->execute([':n' => $noteId, ':l' => $lid]);
+        }
+    }
+
+    /** GET /api/notes?q= */
     public static function getAll(): void {
         $user = Auth::requireAuth();
         $db = getDb();
 
-        $stmt = $db->prepare("
-            SELECT id, title, plain_text_content, color, is_pinned, pinned_at, is_locked, updated_at
-            FROM notes
-            WHERE owner_id = :uid AND deleted_at IS NULL
-            ORDER BY is_pinned DESC, pinned_at DESC, updated_at DESC
-        ");
-        $stmt->execute([':uid' => $user['id']]);
+        $sql = "SELECT id, title, plain_text_content, color, is_pinned, pinned_at, is_locked, updated_at
+                FROM notes WHERE owner_id = :uid AND deleted_at IS NULL";
+        $params = [':uid' => $user['id']];
+
+        $q = trim((string)($_GET['q'] ?? ''));
+        if ($q !== '') {
+            $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q) . '%';
+            $sql .= " AND (title LIKE :q1 OR (is_locked = 0 AND plain_text_content LIKE :q2))";
+            $params[':q1'] = $like;
+            $params[':q2'] = $like;
+        }
+
+        $sql .= " ORDER BY is_pinned DESC, pinned_at DESC, updated_at DESC";
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
         $rows = $stmt->fetchAll();
+        $labelMap = self::labelMap($db, $user['id']);
 
         $notes = [];
         foreach ($rows as $r) {
@@ -43,15 +85,14 @@ class NoteController {
             $notes[] = [
                 'id'          => (int)$r['id'],
                 'title'       => $r['title'],
-                // never leak the content of a locked note
                 'body'        => $locked ? '' : mb_substr((string)$r['plain_text_content'], 0, 200),
                 'pinned'      => (bool)$r['is_pinned'],
                 'pinned_at'   => $r['pinned_at'],
                 'locked'      => $locked,
                 'shared'      => null,   // Phase 4
                 'color'       => $r['color'] ?: 'default',
-                'attachments' => 0,      // added in step 3.2
-                'labels'      => [],     // added in step 3.5
+                'attachments' => 0,      // step 3.2
+                'labels'      => $labelMap[(int)$r['id']] ?? [],
                 'updated'     => date('c', strtotime($r['updated_at'])),
             ];
         }
@@ -86,7 +127,7 @@ class NoteController {
             'shared'      => null,
             'color'       => $r['color'] ?: 'default',
             'attachments' => 0,
-            'labels'      => [],
+            'labels'      => self::labelMap($db, $user['id'])[$id] ?? [],
             'files'       => [],
             'updated'     => date('c', strtotime($r['updated_at'])),
         ]]);
@@ -111,8 +152,13 @@ class NoteController {
             VALUES (:uid, :title, :rich, :plain)
         ");
         $stmt->execute([':uid' => $user['id'], ':title' => $title, ':rich' => $rich, ':plain' => $plain]);
+        $newId = (int)$db->lastInsertId();
 
-        Response::json(['id' => (int)$db->lastInsertId()], 201, 'Note created');
+        if (isset($data['labels']) && is_array($data['labels'])) {
+            self::syncLabels($db, $newId, (int)$user['id'], $data['labels']);
+        }
+
+        Response::json(['id' => $newId], 201, 'Note created');
     }
 
     /** PUT /api/notes/{id} */
@@ -142,6 +188,10 @@ class NoteController {
         ");
         $stmt->execute([':title' => $title, ':rich' => $rich, ':plain' => $plain, ':id' => $id, ':uid' => $user['id']]);
 
+        if (isset($data['labels']) && is_array($data['labels'])) {
+            self::syncLabels($db, $id, (int)$user['id'], $data['labels']);
+        }
+
         Response::json(['id' => $id], 200, 'Note saved');
     }
 
@@ -158,7 +208,7 @@ class NoteController {
         }
         Response::json(null, 200, 'Note deleted');
     }
-    
+
     /** POST /api/notes/{id}/pin (toggle) */
     public static function togglePin(int $id): void {
         $user = Auth::requireAuth();
