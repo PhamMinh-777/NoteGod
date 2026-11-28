@@ -158,4 +158,23 @@ class NoteController {
         }
         Response::json(null, 200, 'Note deleted');
     }
+    
+    /** POST /api/notes/{id}/pin (toggle) */
+    public static function togglePin(int $id): void {
+        $user = Auth::requireAuth();
+        $db = getDb();
+
+        $stmt = $db->prepare("SELECT is_pinned FROM notes WHERE id = :id AND owner_id = :uid AND deleted_at IS NULL");
+        $stmt->execute([':id' => $id, ':uid' => $user['id']]);
+        $r = $stmt->fetch();
+        if (!$r) {
+            Response::error('Note not found.', 404);
+        }
+
+        $pin = !$r['is_pinned'];
+        $upd = $db->prepare("UPDATE notes SET is_pinned = :p, pinned_at = " . ($pin ? 'NOW()' : 'NULL') . " WHERE id = :id AND owner_id = :uid");
+        $upd->execute([':p' => $pin ? 1 : 0, ':id' => $id, ':uid' => $user['id']]);
+
+        Response::json(['pinned' => $pin]);
+    }
 }

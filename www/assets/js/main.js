@@ -599,9 +599,9 @@ async function initEditor() {
 
   // --- options menu ---
   const syncPin = () => $('#opt-pin').text(note.pinned ? 'Unpin' : 'Pin');
-  $('#opt-pin').on('click', () => { note.pinned = !note.pinned; syncPin(); touch(); });
+
     // --- password lock: enable / change / disable ---
-  let lockMode = 'enable';
+  let lockMode = 'enable';git add .
   const syncLock = () => $('#opt-lock').text(note.locked ? 'Change / disable password' : 'Lock with password');
   function setLockMode(m) {
     lockMode = m;
@@ -682,6 +682,15 @@ async function initEditor() {
   window.addEventListener('online', syncOnline); window.addEventListener('offline', syncOnline); syncOnline();
   window.addEventListener('beforeunload', () => {
     if (pending && !readOnly && !deleted) { clearTimeout(timer); persist(); }
+  });
+    $('#opt-pin').on('click', async () => {
+    if (!note.id) await persist(); // a brand-new note must be saved before it can be pinned
+    if (!note.id) return;          // still empty: nothing to pin
+    try {
+      const res = await api('/notes/' + note.id + '/pin', { method: 'POST' });
+      note.pinned = res.data.pinned;
+      $('#opt-pin').text(note.pinned ? 'Unpin' : 'Pin');
+    } catch (err) { alert(err.message || 'Could not pin the note.'); }
   });
   initSummary(() => $('#content').text().trim());
   renderLabels(); renderFiles(); applyColor(); syncPin(); syncLock(); setStatus('saved');

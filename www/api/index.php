@@ -98,6 +98,9 @@ if ($uri === '/api/notes' && $method === 'GET') {
 if ($uri === '/api/notes' && $method === 'POST') {
     NoteController::create();
 }
+if (preg_match('#^/api/notes/(\d+)/pin$#', $uri, $m) && $method === 'POST') {
+    NoteController::togglePin((int)$m[1]);
+}
 if (preg_match('#^/api/notes/(\d+)$#', $uri, $m)) {
     if ($method === 'GET')                         NoteController::getOne((int)$m[1]);
     if ($method === 'PUT' || $method === 'PATCH')  NoteController::update((int)$m[1]);
